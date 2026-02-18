@@ -120,6 +120,14 @@ function isTencentTarget(): boolean {
   return target === "tencent"
 }
 
+function shouldSkipTencentDbCheckInDev(): boolean {
+  if (process.env.NODE_ENV === "production") return false
+  const provider = String(process.env.DB_PROVIDER ?? "").trim().toLowerCase()
+  if (provider === "memory") return true
+  const hasDbUrl = Boolean(process.env.TENCENT_DATABASE_URL || process.env.DATABASE_URL)
+  return !hasDbUrl
+}
+
 function getSupabaseClient(): SupabaseClient | null {
   if (isTencentTarget()) return null
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
@@ -565,7 +573,7 @@ export async function POST(request: NextRequest) {
       console.error("[Rooms API] Failed to get settings store, falling back to memory:", e)
       settingsStore = { kind: "memory" }
     }
-    if (isTencentTarget()) {
+    if (isTencentTarget() && !shouldSkipTencentDbCheckInDev()) {
       const ready = await isMariaDbReady(2500)
       if (!ready) {
         return NextResponse.json({ success: false, error: "Database not ready" }, { status: 503 })

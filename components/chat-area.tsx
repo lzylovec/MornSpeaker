@@ -1,6 +1,5 @@
 "use client"
 
-import { ScrollArea } from "@/components/ui/scroll-area"
 import { SUPPORTED_LANGUAGES, type Message } from "@/components/voice-chat-interface"
 import { ArrowUp, Volume2, VolumeX } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -30,7 +29,7 @@ export function ChatArea({
   const [playingMessageId, setPlayingMessageId] = useState<string | null>(null)
   const [hasAudio, setHasAudio] = useState(false)
   const [showScrollToTop, setShowScrollToTop] = useState(false)
-  const scrollAreaRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const lastMessageIdRef = useRef<string | null>(null)
   const shouldAutoScrollRef = useRef(true)
@@ -106,9 +105,7 @@ export function ChatArea({
   }
 
   useEffect(() => {
-    const root = scrollAreaRef.current
-    if (!root) return
-    const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]')
+    const viewport = scrollContainerRef.current
     if (!viewport) return
 
     const update = () => {
@@ -132,9 +129,7 @@ export function ChatArea({
   }, [])
 
   const handleScrollToTop = () => {
-    const root = scrollAreaRef.current
-    if (!root) return
-    const viewport = root.querySelector<HTMLDivElement>('[data-slot="scroll-area-viewport"]')
+    const viewport = scrollContainerRef.current
     if (!viewport) return
     viewport.scrollTo({ top: 0, behavior: "smooth" })
   }
@@ -246,9 +241,13 @@ export function ChatArea({
   }
 
   return (
-    <ScrollArea
-      className={isEmbedded ? "flex-1 min-h-0 px-3 py-2" : "flex-1 min-h-0 bg-card rounded-xl border border-border p-4"}
-      ref={scrollAreaRef}
+    <div
+      className={
+        isEmbedded
+          ? "relative flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y px-3 py-2 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch]"
+          : "relative flex-1 min-h-0 overflow-y-auto overscroll-contain touch-pan-y bg-card rounded-xl border border-border p-4 [scrollbar-gutter:stable] [-webkit-overflow-scrolling:touch]"
+      }
+      ref={scrollContainerRef}
     >
       {showScrollToTop && (
         <Button
@@ -386,6 +385,6 @@ export function ChatArea({
         ))}
         <div ref={messagesEndRef} />
       </div>
-    </ScrollArea>
+    </div>
   )
 }

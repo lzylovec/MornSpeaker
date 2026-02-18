@@ -112,6 +112,10 @@ type CallSignalPayload = {
 
 const LIVE_CAPTION_SEND_DEBOUNCE_MS = 350
 const LIVE_CAPTION_MAX_TEXT_LENGTH = 800
+const POLL_CALL_INTERVAL_MS = 2000
+const POLL_FAST_INTERVAL_MS = 4000
+const POLL_IDLE_INTERVAL_MS = 12000
+const POLL_ACTIVE_WINDOW_MS = 45000
 
 type VoiceChatInterfaceProps = {
   initialRoomId?: string | null
@@ -214,6 +218,8 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
   const pollFailureCountRef = useRef(0)
   const lastSyncedMessageAtRef = useRef<string | null>(null)
   const pollSyncRoomRef = useRef<string | null>(null)
+  const pollRecentActivityAtRef = useRef(Date.now())
+  const pollUsersSignatureRef = useRef<string | null>(null)
   const translationCacheRef = useRef<Map<string, string>>(new Map())
   const leaveInitiatedRef = useRef(false)
   const [roomSettingsOpen, setRoomSettingsOpen] = useState(false)
@@ -1096,6 +1102,7 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
         }),
       })
       if (!res.ok) throw new Error("发送信令失败")
+      pollRecentActivityAtRef.current = Date.now()
     },
     [roomId, roomUserId],
   )
@@ -2807,6 +2814,8 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
       setRoomSettings(null)
       lastSyncedMessageAtRef.current = null
       pollSyncRoomRef.current = null
+      pollUsersSignatureRef.current = null
+      pollRecentActivityAtRef.current = Date.now()
       resetCallState()
       leaveInitiatedRef.current = false
       if (pollIntervalRef.current) {
@@ -2909,6 +2918,20 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
     if (pollSyncRoomRef.current !== syncRoomKey) {
       pollSyncRoomRef.current = syncRoomKey
       lastSyncedMessageAtRef.current = null
+      pollUsersSignatureRef.current = null
+      pollRecentActivityAtRef.current = Date.now()
+    }
+
+    const markPollActivity = () => {
+      pollRecentActivityAtRef.current = Date.now()
+    }
+
+    const getNextPollDelay = () => {
+      if (callActiveRef.current || callStatusRef.current !== "idle") {
+        return POLL_CALL_INTERVAL_MS
+      }
+      const idleForMs = Date.now() - pollRecentActivityAtRef.current
+      return idleForMs <= POLL_ACTIVE_WINDOW_MS ? POLL_FAST_INTERVAL_MS : POLL_IDLE_INTERVAL_MS
     }
 
     const clearPolling = () => {
@@ -2934,12 +2957,12 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
     const pollRoom = async () => {
       if (cancelled) return
       if (pollInFlightRef.current) {
-        schedulePoll(4000)
+        schedulePoll(getNextPollDelay())
         return
       }
       pollInFlightRef.current = true
       let shouldSchedule = true
-      let nextDelayMs = callActiveRef.current || callStatusRef.current !== "idle" ? 2000 : 4000
+      let nextDelayMs = getNextPollDelay()
       try {
         const controller = new AbortController()
         if (pollAbortRef.current) pollAbortRef.current.abort()
@@ -2972,7 +2995,7 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
           const throttleData = (await response.json().catch(() => null)) as { retryAfter?: unknown } | null
           const retryAfterRaw = Number(throttleData?.retryAfter ?? Number.NaN)
           if (Number.isFinite(retryAfterRaw) && retryAfterRaw > 0) {
-            nextDelayMs = Math.max(2000, Math.min(10000, Math.ceil(retryAfterRaw)))
+            nextDelayMs = Math.max(POLL_FAST_INTERVAL_MS, Math.min(10000, Math.ceil(retryAfterRaw)))
           } else {
             nextDelayMs = 5000
           }
@@ -3002,6 +3025,9 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
         const room = data.room
         let latestMessageMs = Number.NaN
         if (Array.isArray(room.messages)) {
+          if (room.messages.length > 0) {
+            markPollActivity()
+          }
           for (const msg of room.messages) {
             const ts = Date.parse(msg.timestamp)
             if (Number.isFinite(ts) && (!Number.isFinite(latestMessageMs) || ts > latestMessageMs)) {
@@ -3028,10 +3054,21 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
             ? { ...user, sourceLanguage: sourceLanguage.code, targetLanguage: targetLanguage.code }
             : user,
         )
+
+        const nextUsersSignature = nextUsers
+          .map((entry) => `${entry.id}:${entry.name}:${entry.sourceLanguage}:${entry.targetLanguage}`)
+          .sort()
+          .join("|")
+        if (pollUsersSignatureRef.current && pollUsersSignatureRef.current !== nextUsersSignature) {
+          markPollActivity()
+        }
+        pollUsersSignatureRef.current = nextUsersSignature
+
         setUsers(nextUsers)
 
         const signals = Array.isArray(data.signals) ? data.signals : []
         if (signals.length > 0) {
+          markPollActivity()
           for (const evt of signals) {
             const fromId = typeof evt?.from === "string" ? evt.from : ""
             const payload = (evt?.payload ?? {}) as Partial<CallSignalPayload> & Record<string, unknown>
@@ -3271,6 +3308,8 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
       }
       if (data.success) {
         leaveInitiatedRef.current = false
+        pollRecentActivityAtRef.current = Date.now()
+        pollUsersSignatureRef.current = null
         setRoomId(newRoomId)
         setUserName(newUserName)
         setRoomUserId(participantId)
