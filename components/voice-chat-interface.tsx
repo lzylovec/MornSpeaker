@@ -4046,7 +4046,7 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
           onProfileSaved={handleProfileSaved}
           userCount={users.length}
           onShowUsers={() => setIsUsersSheetOpen(true)}
-          onLeaveRoom={handleEndCall}
+          onLeaveRoom={handleLeaveRoom}
           onCopyRoomId={handleCopyRoomId}
         />
       </div>
