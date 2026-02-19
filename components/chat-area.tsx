@@ -9,6 +9,7 @@ import { useTextToSpeech } from "@/hooks/use-text-to-speech"
 import { useState, useEffect, useRef } from "react"
 import { useI18n } from "@/components/i18n-provider"
 import { getHtmlLang } from "@/lib/i18n"
+import { getLocalizedLanguageName, resolveLanguageAlias } from "@/lib/language-display"
 
 type ChatAreaProps = {
   messages: Message[]
@@ -46,18 +47,16 @@ export function ChatArea({
   const useNativeScroll = isMobile || isEmbedded
 
   const getLanguageLabel = (value: string): string => {
-    const byCode = SUPPORTED_LANGUAGES.find((l) => l.code === value)
-    if (byCode) return byCode.name
-    const byName = SUPPORTED_LANGUAGES.find((l) => l.name === value)
-    if (byName) return byName.name
-    return value
+    return getLocalizedLanguageName(value, locale)
   }
 
   const getSpeechLanguageCode = (value: string): string => {
-    const byCode = SUPPORTED_LANGUAGES.find((l) => l.code === value)
+    const normalized = resolveLanguageAlias(value).toLowerCase()
+    const byCode = SUPPORTED_LANGUAGES.find((l) => {
+      const code = l.code.toLowerCase()
+      return code === normalized || code.split("-")[0] === normalized
+    })
     if (byCode) return byCode.code
-    const byName = SUPPORTED_LANGUAGES.find((l) => l.name === value)
-    if (byName) return byName.code
     return "en-US"
   }
 

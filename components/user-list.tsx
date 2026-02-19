@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useMemo } from "react"
-import { Users, Globe, UserX, Phone, Copy, Check } from "lucide-react"
+import { useState } from "react"
+import { UserX, Phone, PhoneOff, VolumeX, Copy, Check, Loader2 } from "lucide-react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { useI18n } from "@/components/i18n-provider"
 import { Button } from "@/components/ui/button"
+import { getAutoDetectLabel } from "@/lib/language-display"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -35,11 +36,56 @@ type UserListProps = {
   onKick?: (targetUserId: string) => void | Promise<void>
   onCall?: (targetUserId: string) => void | Promise<void>
   roomId?: string
+  voiceSession?: {
+    active: boolean
+    hostUserId: string | null
+    participantUserIds: string[]
+    queueUserIds: string[]
+    mutedUserIds: string[]
+    maxParticipants: number
+  } | null
+  voicePrimaryActionLabel?: string
+  voicePrimaryActionDisabled?: boolean
+  voicePrimaryActionLoading?: boolean
+  onVoicePrimaryAction?: () => void | Promise<void>
+  onVoiceLeave?: () => void | Promise<void>
+  onVoiceEnd?: () => void | Promise<void>
+  onVoiceMuteAll?: () => void | Promise<void>
+  onVoiceRemoveParticipant?: (targetUserId: string) => void | Promise<void>
+  showDirectCallFallback?: boolean
 }
 
-export function UserList({ users, currentUserId, adminUserId = null, canKick = false, onKick, onCall, roomId }: UserListProps) {
+export function UserList({
+  users,
+  currentUserId,
+  adminUserId = null,
+  canKick = false,
+  onKick,
+  onCall,
+  roomId,
+  voiceSession = null,
+  voicePrimaryActionLabel,
+  voicePrimaryActionDisabled = false,
+  voicePrimaryActionLoading = false,
+  onVoicePrimaryAction,
+  onVoiceLeave,
+  onVoiceEnd,
+  onVoiceMuteAll,
+  onVoiceRemoveParticipant,
+  showDirectCallFallback = true,
+}: UserListProps) {
   const { t, locale } = useI18n()
   const [copied, setCopied] = useState(false)
+
+  const participantIds = voiceSession?.participantUserIds ?? []
+  const queueIds = voiceSession?.queueUserIds ?? []
+  const mutedIds = voiceSession?.mutedUserIds ?? []
+  const isVoiceActive = Boolean(voiceSession?.active)
+  const isVoiceHost = Boolean(voiceSession?.hostUserId && voiceSession.hostUserId === currentUserId)
+  const isCurrentUserInVoice = participantIds.includes(currentUserId)
+  const isCurrentUserQueued = queueIds.includes(currentUserId)
+  const hostName = users.find((u) => u.id === voiceSession?.hostUserId)?.name || null
+  const activeParticipants = users.filter((u) => participantIds.includes(u.id))
 
   const handleCopyInvite = () => {
     if (!roomId) return
@@ -51,16 +97,8 @@ export function UserList({ users, currentUserId, adminUserId = null, canKick = f
     })
   }
 
-  const displayNames = useMemo(() => {
-    try {
-      return new Intl.DisplayNames([locale === 'zh' ? 'zh-CN' : locale === 'en' ? 'en-US' : locale], { type: 'language' })
-    } catch {
-      return null
-    }
-  }, [locale])
-
   const getLangInfo = (code: string) => {
-    if (!code || code === "auto" || code === "自动识别") return { flag: "🌐", label: "Auto" }
+    if (!code || code === "auto" || code === "自动识别") return { flag: "🌐", label: getAutoDetectLabel(locale) }
     const c = code.toLowerCase()
     if (c.startsWith("zh")) return { flag: "🇨🇳", label: "ZH" }
     if (c.startsWith("en")) return { flag: "🇺🇸", label: "EN" }
@@ -92,49 +130,123 @@ export function UserList({ users, currentUserId, adminUserId = null, canKick = f
                  <Phone className="w-4 h-4" />
               </div>
               <div>
-                 <h3 className="text-sm font-bold text-foreground tracking-tight">语音通话</h3>
-                 <p className="text-[10px] text-muted-foreground font-medium">实时语音翻译通话</p>
+                 <h3 className="text-sm font-bold text-foreground tracking-tight">{t("voice.sessionTitle")}</h3>
+                 <p className="text-[10px] text-muted-foreground font-medium">{t("voice.liveTranslationTitle")}</p>
               </div>
            </div>
-           
-           {users.length <= 1 ? (
-             <div className="text-center py-1">
-                <p className="text-xs text-muted-foreground/80 mb-3 font-medium">邀请好友加入后即可开始通话</p>
-                {roomId && (
-                  <Button variant="outline" size="sm" className="w-full h-8 text-xs gap-2 bg-background/80 hover:bg-background border-dashed" onClick={handleCopyInvite}>
-                    {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
-                    {copied ? "已复制链接" : "复制邀请链接"}
-                  </Button>
-                )}
+
+           <div className="space-y-2">
+             <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+               <span>{t("voice.sessionParticipants", { count: participantIds.length, max: voiceSession?.maxParticipants ?? 8 })}</span>
+               <span>{t("voice.sessionQueue", { count: queueIds.length })}</span>
              </div>
-           ) : (
-             <div className="space-y-2">
-                {users.filter(u => u.id !== currentUserId).map(u => (
-                  <Button 
-                    key={`call-${u.id}`}
-                    variant="default" 
-                    size="sm" 
-                    className="w-full justify-between h-9 text-xs shadow-sm hover:shadow-md transition-all"
-                    onClick={() => onCall && onCall(u.id)}
-                  >
-                    <span className="flex items-center gap-2">
-                       <Avatar className="w-5 h-5 border border-white/20">
-                          <AvatarImage src={u.avatar} />
-                          <AvatarFallback className="text-[9px] bg-primary-foreground/10 text-primary-foreground">{u.name[0]}</AvatarFallback>
-                       </Avatar>
-                       <span className="truncate max-w-[120px]">呼叫 {u.name}</span>
-                    </span>
-                    <Phone className="w-3.5 h-3.5 ml-1 animate-pulse" />
-                  </Button>
-                ))}
-             </div>
-           )}
+             {hostName && (
+               <div className="text-[11px] text-muted-foreground">
+                 {t("voice.sessionHost", { name: hostName })}
+               </div>
+             )}
+
+             <Button
+               variant="default"
+               size="sm"
+               className="w-full justify-center h-9 text-xs shadow-sm hover:shadow-md transition-all"
+               disabled={voicePrimaryActionDisabled || voicePrimaryActionLoading}
+               onClick={() => onVoicePrimaryAction && onVoicePrimaryAction()}
+             >
+               {voicePrimaryActionLoading ? <Loader2 className="w-3.5 h-3.5 mr-1.5 animate-spin" /> : <Phone className="w-3.5 h-3.5 mr-1.5" />}
+               {voicePrimaryActionLabel || t("voice.sessionStart")}
+             </Button>
+
+             {isCurrentUserInVoice && onVoiceLeave && (
+               <Button variant="outline" size="sm" className="w-full justify-center h-9 text-xs" onClick={() => onVoiceLeave()}>
+                 <PhoneOff className="w-3.5 h-3.5 mr-1.5" />
+                 {t("voice.sessionLeave")}
+               </Button>
+             )}
+
+             {isVoiceHost && isVoiceActive && (
+               <div className="grid grid-cols-2 gap-2">
+                 <Button variant="outline" size="sm" className="h-8 text-[11px]" onClick={() => onVoiceMuteAll && onVoiceMuteAll()}>
+                   <VolumeX className="w-3.5 h-3.5 mr-1" />
+                   {t("voice.sessionMuteAll")}
+                 </Button>
+                 <Button variant="destructive" size="sm" className="h-8 text-[11px]" onClick={() => onVoiceEnd && onVoiceEnd()}>
+                   <PhoneOff className="w-3.5 h-3.5 mr-1" />
+                   {t("voice.sessionEnd")}
+                 </Button>
+               </div>
+             )}
+
+             {isCurrentUserQueued && (
+               <div className="text-[11px] text-amber-600 bg-amber-500/10 border border-amber-500/20 rounded-md px-2 py-1">
+                 {t("voice.sessionQueued")}
+               </div>
+             )}
+
+             {!isVoiceActive && users.length <= 1 && (
+               <div className="text-center py-1">
+                 <p className="text-xs text-muted-foreground/80 mb-2 font-medium">{t("roomJoin.roomIdHelp")}</p>
+                 {roomId && (
+                   <Button variant="outline" size="sm" className="w-full h-8 text-xs gap-2 bg-background/80 hover:bg-background border-dashed" onClick={handleCopyInvite}>
+                     {copied ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                     {copied ? t("common.copied") : t("common.copy")}
+                   </Button>
+                 )}
+               </div>
+             )}
+
+             {isVoiceActive && activeParticipants.length > 0 && (
+               <div className="space-y-1 rounded-lg border border-border/50 bg-background/70 p-2">
+                 {activeParticipants.map((participant) => {
+                   const isMuted = mutedIds.includes(participant.id)
+                   const canRemove = isVoiceHost && participant.id !== currentUserId && onVoiceRemoveParticipant
+                   return (
+                     <div key={`voice-member-${participant.id}`} className="flex items-center justify-between gap-2 text-[11px]">
+                       <span className="truncate">
+                         {participant.name}
+                         {participant.id === voiceSession?.hostUserId ? ` (${t("voice.sessionHostShort")})` : ""}
+                         {isMuted ? ` · ${t("voice.sessionMuted")}` : ""}
+                       </span>
+                       {canRemove && (
+                         <Button
+                           variant="ghost"
+                           size="icon"
+                           className="h-6 w-6"
+                           onClick={() => onVoiceRemoveParticipant(participant.id)}
+                           aria-label={t("voice.sessionRemove")}
+                         >
+                           <PhoneOff className="w-3 h-3" />
+                         </Button>
+                       )}
+                     </div>
+                   )
+                 })}
+               </div>
+             )}
+
+             {showDirectCallFallback && users.length > 1 && onCall && (
+               <div className="space-y-1 pt-1">
+                 <div className="text-[10px] uppercase tracking-wider text-muted-foreground/70">{t("voice.directFallback")}</div>
+                 {users.filter((u) => u.id !== currentUserId).slice(0, 8).map((u) => (
+                   <Button
+                     key={`call-${u.id}`}
+                     variant="secondary"
+                     size="sm"
+                     className="w-full justify-between h-8 text-[11px]"
+                     disabled={isVoiceActive}
+                     onClick={() => onCall(u.id)}
+                   >
+                     <span className="truncate max-w-[120px]">{u.name}</span>
+                     <Phone className="w-3 h-3 ml-1" />
+                   </Button>
+                 ))}
+               </div>
+             )}
+           </div>
         </div>
 
         <div className="space-y-2">
-            <h4 className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-wider px-1">
-               在线用户 ({users.length})
-            </h4>
+            <h4 className="text-[10px] font-bold text-muted-foreground/70 uppercase tracking-wider px-1">{t("users.title", { count: users.length })}</h4>
             <div className="space-y-1">
               {users.map((user) => {
                 const source = getLangInfo(user.sourceLanguage)
@@ -188,15 +300,6 @@ export function UserList({ users, currentUserId, adminUserId = null, canKick = f
                     </div>
 
                     <div className="flex items-center gap-1 shrink-0">
-                      {/* Call button moved to top panel, but keeping a small one here for convenience if needed, 
-                          OR removing it to reduce clutter as per 'Function Entry' request. 
-                          I will remove it to force usage of the new panel and make it cleaner. 
-                          Wait, if there are many users, the top panel might get crowded or need scrolling. 
-                          But the user asked to redesign the entry.
-                          Let's keep the small button but make it very subtle, or remove it. 
-                          I'll remove it to declutter.
-                      */}
-                      
                       {canKick && onKick && user.id !== currentUserId && (!adminUserId || user.id !== adminUserId) && (
                         <AlertDialog>
                           <AlertDialogTrigger asChild>

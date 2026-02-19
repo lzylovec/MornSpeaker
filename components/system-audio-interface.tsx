@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useRef, useEffect } from "react"
+import { useState, useRef, useEffect, useMemo } from "react"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
@@ -11,6 +11,8 @@ import { SUPPORTED_LANGUAGES, type Language } from "@/components/voice-chat-inte
 import { useToast } from "@/hooks/use-toast"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
+import { useI18n } from "@/components/i18n-provider"
+import { getLocalizedLanguageName } from "@/lib/language-display"
 
 type TranscriptItem = {
   id: string
@@ -71,6 +73,7 @@ export function SystemAudioInterface() {
   const lastSpeakingTimeRef = useRef<number>(0)
   const speechStartTimeRef = useRef<number>(0)
   const { toast } = useToast()
+  const { locale } = useI18n()
   const scrollRef = useRef<HTMLDivElement>(null)
   const autoScrollRef = useRef(true)
   const activeSourceRef = useRef<Language>(
@@ -117,6 +120,18 @@ export function SystemAudioInterface() {
   }
 
   const [isNativeMode, setIsNativeMode] = useState(false)
+  const localizedLanguageOptions = useMemo(
+    () => SUPPORTED_LANGUAGES.map((lang) => ({ ...lang, name: getLocalizedLanguageName(lang.code, locale) })),
+    [locale],
+  )
+  const sourceLanguageDisplayName = useMemo(
+    () => getLocalizedLanguageName(sourceLanguage.code, locale),
+    [locale, sourceLanguage.code],
+  )
+  const targetLanguageDisplayName = useMemo(
+    () => getLocalizedLanguageName(targetLanguage.code, locale),
+    [locale, targetLanguage.code],
+  )
 
   // Native App Integration
   useEffect(() => {
@@ -871,7 +886,7 @@ export function SystemAudioInterface() {
                     <Select
                       value={sourceLanguage.code}
                       onValueChange={(val) => {
-                        const lang = SUPPORTED_LANGUAGES.find(l => l.code === val)
+                        const lang = localizedLanguageOptions.find((l) => l.code === val)
                         if (lang) setSourceLanguage(lang)
                       }}
                       disabled={isRecording}
@@ -880,7 +895,7 @@ export function SystemAudioInterface() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {SUPPORTED_LANGUAGES.map((lang) => (
+                        {localizedLanguageOptions.map((lang) => (
                           <SelectItem key={lang.code} value={lang.code}>
                             {lang.flag} {lang.name}
                           </SelectItem>
@@ -894,7 +909,7 @@ export function SystemAudioInterface() {
                     <Select
                       value={targetLanguage.code}
                       onValueChange={(val) => {
-                        const lang = SUPPORTED_LANGUAGES.find(l => l.code === val)
+                        const lang = localizedLanguageOptions.find((l) => l.code === val)
                         if (lang) setTargetLanguage(lang)
                       }}
                       disabled={isRecording}
@@ -903,7 +918,7 @@ export function SystemAudioInterface() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {SUPPORTED_LANGUAGES.map((lang) => (
+                        {localizedLanguageOptions.map((lang) => (
                           <SelectItem key={lang.code} value={lang.code}>
                             {lang.flag} {lang.name}
                           </SelectItem>
@@ -923,9 +938,9 @@ export function SystemAudioInterface() {
         {!isSettingsOpen && (
           <div className="flex items-center justify-between bg-card p-3 rounded-lg border shadow-sm animate-in fade-in slide-in-from-top-2">
             <div className="flex items-center gap-4 text-sm">
-              <span className="font-medium">{sourceLanguage.flag} {sourceLanguage.name}</span>
+              <span className="font-medium">{sourceLanguage.flag} {sourceLanguageDisplayName}</span>
               <span className="text-muted-foreground">→</span>
-              <span className="font-medium">{targetLanguage.flag} {targetLanguage.name}</span>
+              <span className="font-medium">{targetLanguage.flag} {targetLanguageDisplayName}</span>
             </div>
             <Button
               size="sm"

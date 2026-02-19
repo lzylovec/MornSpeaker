@@ -24,6 +24,11 @@ const ACTION_RATE_LIMITS = {
   update_language: 60,
   update_user: 60,
   update_settings: 60,
+  voice_start: 120,
+  voice_join: 180,
+  voice_leave: 180,
+  voice_end: 120,
+  voice_control: 180,
   inspect: 120,
 } as const
 
@@ -32,6 +37,34 @@ const POLL_RATE_LIMIT_MS = 3000  // 常规 poll 请求最小间隔3秒
 const POLL_RATE_LIMIT_ACTIVE_CALL_MS = 3000 // 通话中最小轮询间隔
 const POLL_MAX_MESSAGES = 120
 const LONG_POLL_TIMEOUT_MS = 25 * 1000
+const MAX_VOICE_PARTICIPANTS = 8
+const VOICE_SESSION_TTL_MS = 2 * 60 * 60 * 1000
+
+type VoiceControlCommand = "mute_user" | "unmute_user" | "mute_all" | "unmute_all" | "remove_participant" | "promote_host"
+
+type VoiceSessionState = {
+  id: string
+  status: "active"
+  hostUserId: string
+  maxParticipants: number
+  participants: string[]
+  queue: string[]
+  mutedUserIds: string[]
+  startedAt: string
+  updatedAt: string
+}
+
+type VoiceSessionResponse = {
+  id: string
+  status: "active"
+  hostUserId: string
+  maxParticipants: number
+  participants: string[]
+  queue: string[]
+  mutedUserIds: string[]
+  startedAt: string
+  updatedAt: string
+}
 
 type SettingsCache = { value: boolean; fetchedAt: number }
 type CleanupCache = { lastRunAt: number }
@@ -51,6 +84,7 @@ const globalForRoomSettings = globalThis as unknown as {
   __voicelinkActionRateLimit?: Map<string, { count: number; resetTime: number }>
   __voicelinkRoomVersion?: Map<string, number>
   __voicelinkRoomWatchers?: Map<string, Set<() => void>>
+  __voicelinkVoiceSessions?: Map<string, VoiceSessionState>
 }
 
 if (!globalForRoomSettings.__voicelinkRoomSignals) {
@@ -63,6 +97,10 @@ if (!globalForRoomSettings.__voicelinkRoomVersion) {
 
 if (!globalForRoomSettings.__voicelinkRoomWatchers) {
   globalForRoomSettings.__voicelinkRoomWatchers = new Map()
+}
+
+if (!globalForRoomSettings.__voicelinkVoiceSessions) {
+  globalForRoomSettings.__voicelinkVoiceSessions = new Map()
 }
 
 function ensureRoomVersion(roomId: string): number {
@@ -193,6 +231,187 @@ function collectSignals(roomId: string, userId: string): unknown[] {
   const remaining = fresh.filter((s) => s.to !== userId)
   map.set(roomId, remaining)
   return mine
+}
+
+function cloneUniqueIds(ids: string[]): string[] {
+  const result: string[] = []
+  const seen = new Set<string>()
+  for (const raw of ids) {
+    const id = typeof raw === "string" ? raw.trim() : ""
+    if (!id || seen.has(id)) continue
+    seen.add(id)
+    result.push(id)
+  }
+  return result
+}
+
+function buildVoiceSessionResponse(session: VoiceSessionState | null): VoiceSessionResponse | null {
+  if (!session) return null
+  return {
+    id: session.id,
+    status: "active",
+    hostUserId: session.hostUserId,
+    maxParticipants: session.maxParticipants,
+    participants: [...session.participants],
+    queue: [...session.queue],
+    mutedUserIds: [...session.mutedUserIds],
+    startedAt: session.startedAt,
+    updatedAt: session.updatedAt,
+  }
+}
+
+function getVoiceSessionMap(): Map<string, VoiceSessionState> {
+  return globalForRoomSettings.__voicelinkVoiceSessions!
+}
+
+function getVoiceSession(roomId: string): VoiceSessionState | null {
+  const map = getVoiceSessionMap()
+  const session = map.get(roomId)
+  if (!session) return null
+  const updatedMs = Date.parse(session.updatedAt)
+  if (Number.isFinite(updatedMs) && Date.now() - updatedMs > VOICE_SESSION_TTL_MS) {
+    map.delete(roomId)
+    return null
+  }
+  return session
+}
+
+function setVoiceSession(roomId: string, session: VoiceSessionState | null): void {
+  const map = getVoiceSessionMap()
+  if (!session) {
+    map.delete(roomId)
+    return
+  }
+  map.set(roomId, session)
+}
+
+function sanitizeVoiceSessionForUsers(session: VoiceSessionState, users: User[]): VoiceSessionState | null {
+  const nowIso = new Date().toISOString()
+  const validUsers = new Set(users.map((u) => u.id))
+
+  const participants = cloneUniqueIds(session.participants).filter((id) => validUsers.has(id))
+  const queue = cloneUniqueIds(session.queue).filter((id) => validUsers.has(id) && !participants.includes(id))
+
+  if (participants.length === 0 && queue.length === 0) {
+    return null
+  }
+
+  while (participants.length < session.maxParticipants && queue.length > 0) {
+    const next = queue.shift()
+    if (!next) break
+    if (!participants.includes(next)) participants.push(next)
+  }
+
+  if (participants.length === 0) {
+    return null
+  }
+
+  const mutedUserIds = cloneUniqueIds(session.mutedUserIds).filter((id) => participants.includes(id))
+  const hostUserId = participants.includes(session.hostUserId)
+    ? session.hostUserId
+    : participants[0]
+
+  return {
+    ...session,
+    hostUserId,
+    participants,
+    queue,
+    mutedUserIds,
+    updatedAt: nowIso,
+  }
+}
+
+function normalizeVoiceSessionForRoom(roomId: string, users: User[]): VoiceSessionState | null {
+  const current = getVoiceSession(roomId)
+  if (!current) return null
+  const sanitized = sanitizeVoiceSessionForUsers(current, users)
+  setVoiceSession(roomId, sanitized)
+  return sanitized
+}
+
+function createVoiceSession(hostUserId: string): VoiceSessionState {
+  const nowIso = new Date().toISOString()
+  return {
+    id: `voice-${Date.now().toString(36)}-${crypto.randomBytes(4).toString("hex")}`,
+    status: "active",
+    hostUserId,
+    maxParticipants: MAX_VOICE_PARTICIPANTS,
+    participants: [hostUserId],
+    queue: [],
+    mutedUserIds: [],
+    startedAt: nowIso,
+    updatedAt: nowIso,
+  }
+}
+
+function promoteVoiceQueue(session: VoiceSessionState): VoiceSessionState {
+  const participants = [...session.participants]
+  const queue = [...session.queue]
+  while (participants.length < session.maxParticipants && queue.length > 0) {
+    const next = queue.shift()
+    if (!next) break
+    if (!participants.includes(next)) participants.push(next)
+  }
+  const mutedUserIds = session.mutedUserIds.filter((id) => participants.includes(id))
+  return {
+    ...session,
+    participants,
+    queue,
+    mutedUserIds,
+  }
+}
+
+function removeUserFromVoiceSession(roomId: string, userId: string): VoiceSessionState | null {
+  const current = getVoiceSession(roomId)
+  if (!current) return null
+  const uid = userId.trim()
+  if (!uid) return current
+
+  let changed = false
+  let next: VoiceSessionState = {
+    ...current,
+    participants: current.participants.filter((id) => {
+      const keep = id !== uid
+      if (!keep) changed = true
+      return keep
+    }),
+    queue: current.queue.filter((id) => {
+      const keep = id !== uid
+      if (!keep) changed = true
+      return keep
+    }),
+    mutedUserIds: current.mutedUserIds.filter((id) => {
+      const keep = id !== uid
+      if (!keep) changed = true
+      return keep
+    }),
+  }
+
+  if (!changed) return current
+
+  next = promoteVoiceQueue(next)
+
+  if (next.participants.length === 0) {
+    setVoiceSession(roomId, null)
+    return null
+  }
+
+  if (!next.participants.includes(next.hostUserId)) {
+    next.hostUserId = next.participants[0]
+  }
+
+  next.updatedAt = new Date().toISOString()
+  setVoiceSession(roomId, next)
+  return next
+}
+
+function canControlVoiceSession(
+  userId: string,
+  session: VoiceSessionState,
+  roomSettings: RoomSettings | null,
+): boolean {
+  if (session.hostUserId === userId) return true
+  return Boolean(roomSettings?.adminUserId && roomSettings.adminUserId === userId)
 }
 
 function isTencentTarget(): boolean {
@@ -603,6 +822,8 @@ export async function POST(request: NextRequest) {
     const callActive = body.callActive
     const roomVersionRaw = body.roomVersion
     const longPollRaw = body.longPoll
+    const voiceCommand = body.command
+    const voiceTargetUserId = body.voiceTargetUserId
 
     if (typeof action !== "string" || action.trim().length === 0) {
       return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 })
@@ -794,11 +1015,13 @@ export async function POST(request: NextRequest) {
           lastSeenAt: nowIso,
         })
         notifyRoomChanged(rid)
+        const voiceSession = normalizeVoiceSessionForRoom(rid, roomData.users)
 
         return NextResponse.json({
           success: true,
           room: roomData,
           settings: settings ? { adminUserId: settings.adminUserId, joinMode: settings.joinMode } : null,
+          voiceSession: buildVoiceSessionResponse(voiceSession),
         })
       } catch (e) {
         console.error("[Rooms API] Join error:", e)
@@ -825,6 +1048,7 @@ export async function POST(request: NextRequest) {
       }
 
       await store.leaveRoom(roomId.trim(), userId.trim())
+      removeUserFromVoiceSession(roomId.trim(), userId.trim())
       notifyRoomChanged(roomId.trim())
       return NextResponse.json({ success: true })
     }
@@ -903,8 +1127,212 @@ export async function POST(request: NextRequest) {
       }
 
       await store.leaveRoom(rid, tid)
+      removeUserFromVoiceSession(rid, tid)
       notifyRoomChanged(rid)
       return NextResponse.json({ success: true })
+    }
+
+    if (action === "voice_start" || action === "voice_join" || action === "voice_leave" || action === "voice_end" || action === "voice_control") {
+      if (typeof roomId !== "string" || roomId.trim().length === 0) {
+        return NextResponse.json({ success: false, error: "Invalid roomId" }, { status: 400 })
+      }
+      if (typeof userId !== "string" || userId.trim().length === 0) {
+        return NextResponse.json({ success: false, error: "Invalid userId" }, { status: 400 })
+      }
+
+      const rid = roomId.trim()
+      const uid = userId.trim()
+      const roomData = await store.getRoom(rid)
+      if (!roomData) {
+        return NextResponse.json({ success: false, error: "Room not found" }, { status: 404 })
+      }
+
+      const currentUser = roomData.users.find((u) => u.id === uid)
+      if (!currentUser) {
+        return NextResponse.json({ success: false, error: "User not found" }, { status: 404 })
+      }
+
+      let session = normalizeVoiceSessionForRoom(rid, roomData.users)
+      const settings = await getRoomSettings(settingsStore, rid).catch(() => null)
+      const nowIso = new Date().toISOString()
+
+      if (action === "voice_start") {
+        if (!session) {
+          session = createVoiceSession(uid)
+          setVoiceSession(rid, session)
+          notifyRoomChanged(rid)
+          return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), joined: true })
+        }
+
+        if (session.participants.includes(uid)) {
+          return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), joined: true, alreadyJoined: true })
+        }
+
+        if (session.participants.length < session.maxParticipants) {
+          session = {
+            ...session,
+            participants: cloneUniqueIds([...session.participants, uid]),
+            queue: session.queue.filter((id) => id !== uid),
+            mutedUserIds: session.mutedUserIds.filter((id) => id !== uid),
+            updatedAt: nowIso,
+          }
+          setVoiceSession(rid, session)
+          notifyRoomChanged(rid)
+          return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), joined: true })
+        }
+
+        if (!session.queue.includes(uid)) {
+          session = {
+            ...session,
+            queue: [...session.queue, uid],
+            updatedAt: nowIso,
+          }
+          setVoiceSession(rid, session)
+          notifyRoomChanged(rid)
+        }
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), queued: true })
+      }
+
+      if (action === "voice_join") {
+        if (!session) {
+          return NextResponse.json({ success: false, error: "Voice session not started" }, { status: 409 })
+        }
+
+        if (session.participants.includes(uid)) {
+          return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), joined: true, alreadyJoined: true })
+        }
+
+        if (session.participants.length < session.maxParticipants) {
+          session = {
+            ...session,
+            participants: cloneUniqueIds([...session.participants, uid]),
+            queue: session.queue.filter((id) => id !== uid),
+            mutedUserIds: session.mutedUserIds.filter((id) => id !== uid),
+            updatedAt: nowIso,
+          }
+          setVoiceSession(rid, session)
+          notifyRoomChanged(rid)
+          return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), joined: true })
+        }
+
+        if (!session.queue.includes(uid)) {
+          session = {
+            ...session,
+            queue: [...session.queue, uid],
+            updatedAt: nowIso,
+          }
+          setVoiceSession(rid, session)
+          notifyRoomChanged(rid)
+        }
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), queued: true })
+      }
+
+      if (action === "voice_leave") {
+        const nextSession = removeUserFromVoiceSession(rid, uid)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(nextSession), left: true })
+      }
+
+      if (action === "voice_end") {
+        if (!session) {
+          return NextResponse.json({ success: true, voiceSession: null, ended: true })
+        }
+        if (!canControlVoiceSession(uid, session, settings)) {
+          return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 })
+        }
+        setVoiceSession(rid, null)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: null, ended: true })
+      }
+
+      if (!session) {
+        return NextResponse.json({ success: false, error: "Voice session not started" }, { status: 409 })
+      }
+      if (!canControlVoiceSession(uid, session, settings)) {
+        return NextResponse.json({ success: false, error: "Forbidden" }, { status: 403 })
+      }
+
+      const command = typeof voiceCommand === "string" ? voiceCommand.trim() as VoiceControlCommand : ""
+      if (!command) {
+        return NextResponse.json({ success: false, error: "Invalid command" }, { status: 400 })
+      }
+
+      if (command === "mute_all") {
+        session = {
+          ...session,
+          mutedUserIds: cloneUniqueIds([...session.participants]),
+          updatedAt: nowIso,
+        }
+        setVoiceSession(rid, session)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), command })
+      }
+
+      if (command === "unmute_all") {
+        session = {
+          ...session,
+          mutedUserIds: [],
+          updatedAt: nowIso,
+        }
+        setVoiceSession(rid, session)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), command })
+      }
+
+      const targetId = typeof voiceTargetUserId === "string" ? voiceTargetUserId.trim() : ""
+      if (!targetId) {
+        return NextResponse.json({ success: false, error: "Invalid voiceTargetUserId" }, { status: 400 })
+      }
+
+      if (command === "mute_user") {
+        if (!session.participants.includes(targetId)) {
+          return NextResponse.json({ success: false, error: "Target is not in voice session" }, { status: 400 })
+        }
+        session = {
+          ...session,
+          mutedUserIds: cloneUniqueIds([...session.mutedUserIds, targetId]),
+          updatedAt: nowIso,
+        }
+        setVoiceSession(rid, session)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), command })
+      }
+
+      if (command === "unmute_user") {
+        session = {
+          ...session,
+          mutedUserIds: session.mutedUserIds.filter((id) => id !== targetId),
+          updatedAt: nowIso,
+        }
+        setVoiceSession(rid, session)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), command })
+      }
+
+      if (command === "remove_participant") {
+        if (targetId === session.hostUserId) {
+          return NextResponse.json({ success: false, error: "Cannot remove host" }, { status: 400 })
+        }
+        const nextSession = removeUserFromVoiceSession(rid, targetId)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(nextSession), command, removedUserId: targetId })
+      }
+
+      if (command === "promote_host") {
+        if (!session.participants.includes(targetId)) {
+          return NextResponse.json({ success: false, error: "Target is not in voice session" }, { status: 400 })
+        }
+        session = {
+          ...session,
+          hostUserId: targetId,
+          updatedAt: nowIso,
+        }
+        setVoiceSession(rid, session)
+        notifyRoomChanged(rid)
+        return NextResponse.json({ success: true, voiceSession: buildVoiceSessionResponse(session), command })
+      }
+
+      return NextResponse.json({ success: false, error: "Invalid command" }, { status: 400 })
     }
 
     if (action === "update_language") {
@@ -1145,6 +1573,7 @@ export async function POST(request: NextRequest) {
         }
         if (Number.isFinite(lastSeenMs) && nowMs - lastSeenMs > USER_PRESENCE_TTL_MS) {
           updates.push(store.leaveRoom(rid, user.id))
+          removeUserFromVoiceSession(rid, user.id)
           continue
         }
         activeUsers.push(nextUser)
@@ -1155,6 +1584,7 @@ export async function POST(request: NextRequest) {
       }
 
       const settings = await getRoomSettings(settingsStore, roomId.trim()).catch(() => null)
+      const voiceSession = normalizeVoiceSessionForRoom(rid, activeUsers)
       const signals = uid ? collectSignals(rid, uid) : []
       const currentRoomVersion = ensureRoomVersion(rid)
       const incrementalMessages = Array.isArray(roomData.messages)
@@ -1175,6 +1605,7 @@ export async function POST(request: NextRequest) {
         roomVersion: currentRoomVersion,
         signals,
         settings: settings ? { adminUserId: settings.adminUserId, joinMode: settings.joinMode } : null,
+        voiceSession: buildVoiceSessionResponse(voiceSession),
       })
     }
 
