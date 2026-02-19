@@ -318,8 +318,8 @@ export function detectLanguageFromText(text: string): string {
   const value = typeof text === "string" ? text : ""
   const trimmed = value.trim()
   if (!trimmed) return "en-US"
-  if (/[\p{Script=Han}]/u.test(trimmed)) return "zh-CN"
   if (/[\u3040-\u30FF]/.test(trimmed) || /[\u31F0-\u31FF]/.test(trimmed)) return "ja-JP"
+  if (/[\p{Script=Han}]/u.test(trimmed)) return "zh-CN"
   if (/[\uAC00-\uD7AF]/.test(trimmed)) return "ko-KR"
   if (/[ñÑáéíóúÁÉÍÓÚ¡¿]/.test(trimmed)) return "es-ES"
   if (/[àâçéèêëîïôùûüÿÀÂÇÉÈÊËÎÏÔÙÛÜŸ]/.test(trimmed)) return "fr-FR"

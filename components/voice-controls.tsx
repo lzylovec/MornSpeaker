@@ -13,7 +13,9 @@ type VoiceControlsProps = {
   onRecordingChange?: (isRecording: boolean) => void
   variant?: "stacked" | "inline" | "compact"
   showHint?: boolean
+  showStatus?: boolean
   className?: string
+  buttonSize?: string
 }
 
 export function VoiceControls({
@@ -22,7 +24,9 @@ export function VoiceControls({
   onRecordingChange,
   variant = "stacked",
   showHint = true,
+  showStatus = true,
   className,
+  buttonSize,
 }: VoiceControlsProps) {
   const { isRecording, recordingTime, audioBlob, startRecording, stopRecording, clearRecording } = useAudioRecorder()
   const { t } = useI18n()
@@ -127,7 +131,7 @@ export function VoiceControls({
   return (
     <div className={`${isInline ? "flex items-center gap-3" : isCompact ? "flex flex-col items-center gap-2" : "flex flex-col items-center gap-4"} ${className || ""}`}>
       {/* Top Status Area (Stacked) or Left Area (Inline) */}
-      {(isInline || isStacked) && (
+      {showStatus && (isInline || isStacked) && (
         <div className={isInline ? "flex-1 min-w-0" : "min-h-[24px] flex flex-col justify-end"}>
           {isProcessing && (
             <div className={isInline ? "flex items-center gap-2 text-muted-foreground" : "flex items-center gap-2 text-muted-foreground"}>
@@ -159,7 +163,7 @@ export function VoiceControls({
       <Button
         size={isStacked ? "lg" : "default"}
         className={`rounded-full transition-all ${
-          isStacked ? "w-20 h-20" : "w-14 h-14"
+          buttonSize || (isStacked ? "w-20 h-20" : "w-14 h-14")
         } ${
           isRecording
             ? "bg-destructive hover:bg-destructive/90 text-destructive-foreground scale-110"
@@ -179,9 +183,9 @@ export function VoiceControls({
       </Button>
 
       {/* Bottom Area (Stacked: Hint only; Compact: Status + Hint) */}
-      {(!isInline) && (
+      {!isInline && ((isCompact && showStatus && (isProcessing || isRecording)) || showHint) && (
         <div className={`text-center ${isCompact ? "min-h-[20px] flex items-center justify-center" : ""}`}>
-           {isCompact && (isProcessing || isRecording) ? (
+           {isCompact && showStatus && (isProcessing || isRecording) ? (
               /* Compact Status */
               isProcessing ? (
                 <div className="flex items-center gap-2 text-muted-foreground">

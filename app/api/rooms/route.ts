@@ -8,14 +8,14 @@ import crypto from "node:crypto"
 
 const ROOM_TTL_MS = 24 * 60 * 60 * 1000
 const USER_PRESENCE_TTL_MS = 120 * 1000
-const USER_PRESENCE_HEARTBEAT_MS = 15 * 1000
+const USER_PRESENCE_HEARTBEAT_MS = 30 * 1000
 const SIGNAL_TTL_MS = 60 * 1000
 const SETTINGS_KEY = "rooms_auto_delete_after_24h"
 const ROOM_ACTIVITY_COLUMN = "last_activity_at"
 const ROOM_SETTINGS_PREFIX = "room:"
 const ACTION_RATE_WINDOW_MS = 60 * 1000
 const ACTION_RATE_LIMITS = {
-  poll: 120,
+  poll: 60,
   signal: 600,
   join: 60,
   leave: 60,
@@ -28,8 +28,10 @@ const ACTION_RATE_LIMITS = {
 } as const
 
 // poll 限流配置
-const POLL_RATE_LIMIT_MS = 2000  // poll 请求最小间隔2秒
+const POLL_RATE_LIMIT_MS = 3000  // 常规 poll 请求最小间隔3秒
+const POLL_RATE_LIMIT_ACTIVE_CALL_MS = 3000 // 通话中最小轮询间隔
 const POLL_MAX_MESSAGES = 120
+const LONG_POLL_TIMEOUT_MS = 25 * 1000
 
 type SettingsCache = { value: boolean; fetchedAt: number }
 type CleanupCache = { lastRunAt: number }
@@ -47,10 +49,90 @@ const globalForRoomSettings = globalThis as unknown as {
   __voicelinkRoomSignals?: Map<string, Array<{ to: string; from: string; payload: unknown; createdAt: number }>>
   __voicelinkPollRateLimit?: Map<string, number>  // poll 限流缓存
   __voicelinkActionRateLimit?: Map<string, { count: number; resetTime: number }>
+  __voicelinkRoomVersion?: Map<string, number>
+  __voicelinkRoomWatchers?: Map<string, Set<() => void>>
 }
 
 if (!globalForRoomSettings.__voicelinkRoomSignals) {
   globalForRoomSettings.__voicelinkRoomSignals = new Map()
+}
+
+if (!globalForRoomSettings.__voicelinkRoomVersion) {
+  globalForRoomSettings.__voicelinkRoomVersion = new Map()
+}
+
+if (!globalForRoomSettings.__voicelinkRoomWatchers) {
+  globalForRoomSettings.__voicelinkRoomWatchers = new Map()
+}
+
+function ensureRoomVersion(roomId: string): number {
+  const map = globalForRoomSettings.__voicelinkRoomVersion!
+  const existing = map.get(roomId)
+  if (typeof existing === "number" && Number.isFinite(existing) && existing > 0) {
+    return existing
+  }
+  const initial = Date.now()
+  map.set(roomId, initial)
+  return initial
+}
+
+function notifyRoomChanged(roomId: string) {
+  const versions = globalForRoomSettings.__voicelinkRoomVersion!
+  const previous = ensureRoomVersion(roomId)
+  const next = Math.max(Date.now(), previous + 1)
+  versions.set(roomId, next)
+
+  const watchersMap = globalForRoomSettings.__voicelinkRoomWatchers!
+  const watchers = watchersMap.get(roomId)
+  if (!watchers || watchers.size === 0) return
+  for (const wake of Array.from(watchers)) {
+    try {
+      wake()
+    } catch {
+      // ignore watcher errors
+    }
+  }
+  watchersMap.delete(roomId)
+}
+
+async function waitForRoomChange(roomId: string, currentVersion: number, timeoutMs: number): Promise<"changed" | "timeout"> {
+  if (ensureRoomVersion(roomId) > currentVersion) {
+    return "changed"
+  }
+
+  return new Promise((resolve) => {
+    const watchersMap = globalForRoomSettings.__voicelinkRoomWatchers!
+    const roomWatchers = watchersMap.get(roomId) ?? new Set<() => void>()
+    watchersMap.set(roomId, roomWatchers)
+
+    let settled = false
+    const cleanup = () => {
+      roomWatchers.delete(onWake)
+      if (roomWatchers.size === 0) watchersMap.delete(roomId)
+    }
+
+    let timer: ReturnType<typeof setTimeout> | null = null
+
+    const finish = (result: "changed" | "timeout") => {
+      if (settled) return
+      settled = true
+      if (timer) {
+        clearTimeout(timer)
+      }
+      cleanup()
+      resolve(result)
+    }
+
+    const onWake = () => finish("changed")
+    roomWatchers.add(onWake)
+
+    if (ensureRoomVersion(roomId) > currentVersion) {
+      finish("changed")
+      return
+    }
+
+    timer = setTimeout(() => finish("timeout"), timeoutMs)
+  })
 }
 
 function enqueueSignal(roomId: string, to: string, from: string, payload: unknown) {
@@ -118,14 +200,6 @@ function isTencentTarget(): boolean {
     .trim()
     .toLowerCase()
   return target === "tencent"
-}
-
-function shouldSkipTencentDbCheckInDev(): boolean {
-  if (process.env.NODE_ENV === "production") return false
-  const provider = String(process.env.DB_PROVIDER ?? "").trim().toLowerCase()
-  if (provider === "memory") return true
-  const hasDbUrl = Boolean(process.env.TENCENT_DATABASE_URL || process.env.DATABASE_URL)
-  return !hasDbUrl
 }
 
 function getSupabaseClient(): SupabaseClient | null {
@@ -526,6 +600,9 @@ export async function POST(request: NextRequest) {
     const settingsPassword = body.password
     const targetUserId = body.targetUserId
     const since = body.since
+    const callActive = body.callActive
+    const roomVersionRaw = body.roomVersion
+    const longPollRaw = body.longPoll
 
     if (typeof action !== "string" || action.trim().length === 0) {
       return NextResponse.json({ success: false, error: "Invalid action" }, { status: 400 })
@@ -573,7 +650,7 @@ export async function POST(request: NextRequest) {
       console.error("[Rooms API] Failed to get settings store, falling back to memory:", e)
       settingsStore = { kind: "memory" }
     }
-    if (isTencentTarget() && !shouldSkipTencentDbCheckInDev()) {
+    if (isTencentTarget()) {
       const ready = await isMariaDbReady(2500)
       if (!ready) {
         return NextResponse.json({ success: false, error: "Database not ready" }, { status: 503 })
@@ -716,6 +793,7 @@ export async function POST(request: NextRequest) {
           avatar,
           lastSeenAt: nowIso,
         })
+        notifyRoomChanged(rid)
 
         return NextResponse.json({
           success: true,
@@ -747,6 +825,7 @@ export async function POST(request: NextRequest) {
       }
 
       await store.leaveRoom(roomId.trim(), userId.trim())
+      notifyRoomChanged(roomId.trim())
       return NextResponse.json({ success: true })
     }
 
@@ -788,6 +867,7 @@ export async function POST(request: NextRequest) {
         }
       }
       await setRoomSettings(settingsStore, rid, next)
+      notifyRoomChanged(rid)
       return NextResponse.json({ success: true, settings: { adminUserId: next.adminUserId, joinMode: next.joinMode } })
     }
 
@@ -823,6 +903,7 @@ export async function POST(request: NextRequest) {
       }
 
       await store.leaveRoom(rid, tid)
+      notifyRoomChanged(rid)
       return NextResponse.json({ success: true })
     }
 
@@ -866,6 +947,7 @@ export async function POST(request: NextRequest) {
       }
 
       await store.joinRoom(rid, nextUser)
+      notifyRoomChanged(rid)
       return NextResponse.json({ success: true })
     }
 
@@ -907,6 +989,7 @@ export async function POST(request: NextRequest) {
       }
 
       await store.joinRoom(rid, nextUser)
+      notifyRoomChanged(rid)
       return NextResponse.json({ success: true })
     }
 
@@ -933,6 +1016,7 @@ export async function POST(request: NextRequest) {
           .update({ [ROOM_ACTIVITY_COLUMN]: new Date().toISOString() })
           .eq("id", roomId.trim())
       }
+      notifyRoomChanged(roomId.trim())
       return NextResponse.json({ success: true, message: savedMessage })
     }
 
@@ -968,6 +1052,7 @@ export async function POST(request: NextRequest) {
       }
 
       enqueueSignal(roomId.trim(), toUserId, senderId, payload)
+      notifyRoomChanged(roomId.trim())
       return NextResponse.json({ success: true })
     }
 
@@ -982,6 +1067,13 @@ export async function POST(request: NextRequest) {
         typeof since === "string" && since.trim().length > 0
           ? Date.parse(since)
           : Number.NaN
+      const isActiveCall = callActive === true
+      const roomVersion =
+        typeof roomVersionRaw === "number"
+          ? roomVersionRaw
+          : Number.parseInt(typeof roomVersionRaw === "string" ? roomVersionRaw : "", 10)
+      const wantsLongPoll = longPollRaw !== false
+      const minPollIntervalMs = isActiveCall ? POLL_RATE_LIMIT_ACTIVE_CALL_MS : POLL_RATE_LIMIT_MS
       
       // poll 频率限制检查
       if (!globalForRoomSettings.__voicelinkPollRateLimit) {
@@ -990,15 +1082,28 @@ export async function POST(request: NextRequest) {
       const pollKey = `${rid}:${uid || 'anonymous'}`
       const lastPoll = globalForRoomSettings.__voicelinkPollRateLimit.get(pollKey) || 0
       const nowMs = Date.now()
-      if (nowMs - lastPoll < POLL_RATE_LIMIT_MS) {
+      if (!wantsLongPoll && nowMs - lastPoll < minPollIntervalMs) {
         // 请求过于频繁，返回缓存数据或简单响应
         return NextResponse.json({ 
           success: true,
           throttled: true,
-          retryAfter: POLL_RATE_LIMIT_MS - (nowMs - lastPoll)
+          retryAfter: minPollIntervalMs - (nowMs - lastPoll)
         }, { status: 429 })
       }
-      globalForRoomSettings.__voicelinkPollRateLimit.set(pollKey, nowMs)
+      if (!wantsLongPoll) {
+        globalForRoomSettings.__voicelinkPollRateLimit.set(pollKey, nowMs)
+      }
+
+      if (wantsLongPoll && Number.isFinite(roomVersion) && roomVersion > 0) {
+        const waitResult = await waitForRoomChange(rid, roomVersion, LONG_POLL_TIMEOUT_MS)
+        if (waitResult === "timeout") {
+          return NextResponse.json({
+            success: true,
+            timeout: true,
+            roomVersion: ensureRoomVersion(rid),
+          })
+        }
+      }
 
       if (settingsStore.kind !== "memory") {
         const expired = await cleanupRoomIfExpired(settingsStore, roomId.trim())
@@ -1051,6 +1156,7 @@ export async function POST(request: NextRequest) {
 
       const settings = await getRoomSettings(settingsStore, roomId.trim()).catch(() => null)
       const signals = uid ? collectSignals(rid, uid) : []
+      const currentRoomVersion = ensureRoomVersion(rid)
       const incrementalMessages = Array.isArray(roomData.messages)
         ? roomData.messages.filter((msg) => {
             if (!Number.isFinite(sinceMs)) return true
@@ -1066,6 +1172,7 @@ export async function POST(request: NextRequest) {
           users: activeUsers,
           messages: incrementalMessages.slice(-POLL_MAX_MESSAGES),
         },
+        roomVersion: currentRoomVersion,
         signals,
         settings: settings ? { adminUserId: settings.adminUserId, joinMode: settings.joinMode } : null,
       })

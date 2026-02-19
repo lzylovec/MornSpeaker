@@ -9,13 +9,6 @@ const isTencentTarget = () => {
   return publicTarget === "tencent" || privateTarget === "tencent"
 }
 
-const isDevDbUnavailable = (error: unknown): boolean => {
-  if (process.env.NODE_ENV === "production") return false
-  if (isMariaDbConnectionError(error)) return true
-  const message = error instanceof Error ? error.message : String(error ?? "")
-  return message.includes("DATABASE_URL is not set")
-}
-
 const resolveDisplayName = (value: unknown): string | null => {
   if (typeof value !== "string") return null
   const trimmed = value.trim()
@@ -42,7 +35,7 @@ export async function GET(request: NextRequest) {
     const displayName = user?.name ?? null
     return NextResponse.json({ success: true, displayName })
   } catch (error) {
-    if (isTencentTarget() && isDevDbUnavailable(error)) {
+    if (isTencentTarget() && process.env.NODE_ENV !== "production" && isMariaDbConnectionError(error)) {
       return NextResponse.json({ success: true, displayName: null })
     }
     console.error("Get profile error:", error)
@@ -79,8 +72,8 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ success: true, displayName })
   } catch (error) {
-    if (isTencentTarget() && isDevDbUnavailable(error)) {
-      return NextResponse.json({ success: true, displayName: null })
+    if (isTencentTarget() && process.env.NODE_ENV !== "production" && isMariaDbConnectionError(error)) {
+      return NextResponse.json({ success: false, displayName: null, error: "Database unavailable" })
     }
     console.error("Save profile error:", error)
     return NextResponse.json({ success: false, error: "Internal server error" }, { status: 500 })

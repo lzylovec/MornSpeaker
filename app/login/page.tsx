@@ -25,7 +25,6 @@ export default function LoginPage() {
   const supabase = useMemo(() => getSupabaseBrowserClient(), [])
   const { user, isLoading } = useAuth()
   const isTencent = process.env.NEXT_PUBLIC_DEPLOY_TARGET === "tencent"
-  const isDev = process.env.NODE_ENV !== "production"
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
@@ -134,42 +133,31 @@ export default function LoginPage() {
     return url.toString()
   }
 
-  const hashTencentUsername = (value: string) => {
-    let hash = 2166136261
-    for (let i = 0; i < value.length; i += 1) {
-      hash ^= value.charCodeAt(i)
-      hash = Math.imul(hash, 16777619)
-    }
-    return (hash >>> 0).toString(36)
-  }
-
   const buildTencentUsername = (value: string) => {
-    const normalizedEmail = value.trim().toLowerCase()
-    const localPart = normalizedEmail.split("@")[0] ?? ""
-    let base = localPart
-      .replace(/[^0-9a-z-_]/g, "-")
-      .replace(/-+/g, "-")
-      .replace(/^-+|-+$/g, "")
-
-    if (!base) {
-      base = "user"
+    const localPart = value.split("@")[0] ?? ""
+    let normalized = localPart.toLowerCase().replace(/[^0-9a-z-_]/g, "-")
+    if (!/^[a-z]/.test(normalized)) {
+      normalized = `u${normalized}`
     }
-    if (!/^[a-z]/.test(base)) {
-      base = `u${base}`
+    if (normalized.length < 6) {
+      normalized = (normalized + "000000").slice(0, 6)
     }
-
-    const suffix = hashTencentUsername(normalizedEmail).slice(0, 6).padEnd(6, "0")
-    const maxBaseLength = 25 - suffix.length - 1
-    const clippedBase = base.slice(0, Math.max(1, maxBaseLength))
-    const username = `${clippedBase}-${suffix}`
-
-    if (/^[a-z][0-9a-z-_]{5,24}$/.test(username)) {
-      return username
+    if (normalized.length > 25) {
+      normalized = normalized.slice(0, 25)
     }
-
-    const fallbackBase = "user"
-    const fallback = `${fallbackBase}-${suffix}`
-    return fallback.slice(0, 25)
+    if (!/^[a-z][0-9a-z-_]{5,24}$/.test(normalized)) {
+      normalized = normalized.replace(/[^0-9a-z-_]/g, "-")
+      if (!/^[a-z]/.test(normalized)) {
+        normalized = `u${normalized}`
+      }
+      if (normalized.length < 6) {
+        normalized = (normalized + "000000").slice(0, 6)
+      }
+      if (normalized.length > 25) {
+        normalized = normalized.slice(0, 25)
+      }
+    }
+    return normalized
   }
 
   const syncTencentUser = async (trimmedEmail: string, rawPassword: string) => {
@@ -368,14 +356,6 @@ export default function LoginPage() {
     return hasLetter && hasNumber
   }
 
-  const isTencentUsernameConflict = (message: string): boolean => {
-    const normalized = message.toLowerCase()
-    return (
-      (normalized.includes("username") && normalized.includes("already")) ||
-      message.includes("用户名")
-    )
-  }
-
   const handleEmailLogin = async () => {
     setIsSubmitting(true)
     try {
@@ -469,6 +449,23 @@ export default function LoginPage() {
     try {
       if (isTencent) {
         const trimmedEmail = email.trim()
+        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1"
+
+        // 本地环境直接调用注册接口，跳过验证码
+        if (isLocal) {
+          const res = await fetch("/api/auth/register", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: trimmedEmail, password })
+          })
+          const data = await res.json()
+          if (data.success) {
+            toast({ title: "注册成功", description: "账号已在本地环境创建，请直接登录。" })
+            return
+          } else {
+            throw new Error(data.error || "注册失败")
+          }
+        }
 
         const { getCloudBaseAuth } = await import("@/lib/cloudbase-client")
         const auth = getCloudBaseAuth()
@@ -520,31 +517,8 @@ export default function LoginPage() {
 
   const handleVerifySignupCode = async () => {
     setIsSubmitting(true)
-    const trimmedEmail = email.trim()
-    const tryLocalRegisterAndLogin = async () => {
-      const registerRes = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmedEmail, password }),
-      })
-      const registerData = await registerRes.json()
-      if (!registerData.success && !String(registerData.error || "").toLowerCase().includes("already exists")) {
-        return false
-      }
-      const loginRes = await fetch("/api/auth/login", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: trimmedEmail, password }),
-      })
-      const loginData = await loginRes.json()
-      if (!loginData.success) {
-        return false
-      }
-      clearTencentLoggedOut()
-      router.replace("/")
-      return true
-    }
     try {
+      const trimmedEmail = email.trim()
       const trimmedCode = emailCode.trim()
       if (isTencent) {
         const { getCloudBaseAuth } = await import("@/lib/cloudbase-client")
@@ -565,40 +539,12 @@ export default function LoginPage() {
             toast({ title: "邮箱不一致", description: "请使用接收验证码的邮箱完成验证。", variant: "destructive" })
             return
           }
-          const usernameCandidates = [
-            buildTencentUsername(trimmedEmail),
-            `${buildTencentUsername(trimmedEmail).slice(0, 14)}-${Date.now().toString(36).slice(-4)}`,
-            `user-${Math.random().toString(36).slice(2, 10)}`,
-          ]
-
-          let signUpRes: {
-            data?: { verifyOtp?: (params: { token: string; messageId?: string }) => Promise<{ error?: unknown }> }
-            error?: unknown
-          } | null = null
-          let signUpError: unknown = null
-
-          for (const username of usernameCandidates) {
-            const candidateRes = await auth.signUp({
-              email: trimmedEmail,
-              password,
-              username,
-            })
-            if (!candidateRes?.error) {
-              signUpRes = candidateRes
-              signUpError = null
-              break
-            }
-            const message = extractTencentAuthError(candidateRes.error)
-            signUpError = candidateRes.error
-            if (!isTencentUsernameConflict(message)) {
-              break
-            }
-          }
-
-          if (signUpError) throw signUpError
-          if (!signUpRes) {
-            throw new Error("注册失败")
-          }
+          const signUpRes = await auth.signUp({
+            email: trimmedEmail,
+            password,
+            username: buildTencentUsername(trimmedEmail),
+          })
+          if (signUpRes?.error) throw signUpRes.error
           if (!signUpRes?.data?.verifyOtp) {
             throw new Error("验证码流程不可用")
           }
@@ -645,19 +591,6 @@ export default function LoginPage() {
           description = "参数不合法。请重新获取验证码，并将密码设置为包含字母和数字的 6-20 位组合。"
         } else if (normalized.includes("invalid_verification_code")) {
           description = "验证码无效或已过期，请点击重新发送后再试。"
-        } else if (isTencentUsernameConflict(rawMessage)) {
-          if (isDev) {
-            try {
-              const fallbackOk = await tryLocalRegisterAndLogin()
-              if (fallbackOk) {
-                toast({ title: "验证成功", description: "云端注册冲突，已切换为本地账号登录。" })
-                return
-              }
-            } catch {
-              // ignore fallback errors
-            }
-          }
-          description = "当前注册请求冲突，请点击重新发送验证码后再试。"
         } else if (normalized.includes("already_exists")) {
           description = "该邮箱已注册，请直接登录或重置密码。"
         } else if (normalized.includes("invalid_password")) {

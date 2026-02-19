@@ -119,8 +119,8 @@ export default async function AdminDashboard() {
                     <span className="text-sm text-green-500">运行中</span>
                 </div>
                 <div className="flex items-center justify-between">
-                    <span className="text-sm font-medium">语音服务</span>
-                    <span className="text-sm text-green-500">{trtcEnabled ? "TRTC模式" : "标准模式"}</span>
+                    <span className="text-sm font-medium">字幕翻译服务</span>
+                    <span className="text-sm text-green-500">{trtcEnabled ? "TRTC字幕增强" : "标准字幕引擎"}</span>
                 </div>
              </div>
           </CardContent>
