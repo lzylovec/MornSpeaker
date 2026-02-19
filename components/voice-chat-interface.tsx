@@ -117,6 +117,9 @@ const ACTIVE_CALL_POLL_FAST_INTERVAL_MS = 3000
 const ACTIVE_CALL_POLL_INTERVAL_MS = 3000
 const ACTIVE_CALL_POLL_IDLE_INTERVAL_MS = 6000
 const IDLE_POLL_INTERVAL_MS = 6000
+const POLL_BACKGROUND_PAUSE_DELAY_MS = 45_000
+const POLL_USER_IDLE_PAUSE_MS = 5 * 60_000
+const POLL_IDLE_CHECK_INTERVAL_MS = 30_000
 
 type VoiceChatInterfaceProps = {
   initialRoomId?: string | null
@@ -3163,6 +3166,10 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
     if (!isInRoom || !roomId || !roomUserId) return
     const cache = translationCacheRef.current
     let cancelled = false
+    let pollSuspended = false
+    let hiddenPollPauseTimer: ReturnType<typeof setTimeout> | null = null
+    let idleCheckTimer: ReturnType<typeof setInterval> | null = null
+    let lastUserInteractionAt = Date.now()
     const syncRoomKey = `${roomId}:${roomUserId}`
     if (pollSyncRoomRef.current !== syncRoomKey) {
       pollSyncRoomRef.current = syncRoomKey
@@ -3192,15 +3199,72 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
     }
 
     const schedulePoll = (delayMs: number) => {
-      if (cancelled) return
+      if (cancelled || pollSuspended) return
       if (pollIntervalRef.current) clearTimeout(pollIntervalRef.current)
       pollIntervalRef.current = setTimeout(() => {
         void pollRoom()
       }, delayMs)
     }
 
+    const clearHiddenPollPauseTimer = () => {
+      if (hiddenPollPauseTimer) {
+        clearTimeout(hiddenPollPauseTimer)
+        hiddenPollPauseTimer = null
+      }
+    }
+
+    const suspendPolling = () => {
+      if (pollSuspended) return
+      pollSuspended = true
+      clearPolling()
+    }
+
+    const resumePolling = () => {
+      if (cancelled || !pollSuspended) return
+      pollSuspended = false
+      pollFailureCountRef.current = 0
+      void pollRoom()
+    }
+
+    const evaluateIdleSuspension = () => {
+      if (cancelled || pollSuspended || document.hidden) return
+      if (callStatusRef.current === "active") return
+      if (Date.now() - lastUserInteractionAt >= POLL_USER_IDLE_PAUSE_MS) {
+        suspendPolling()
+      }
+    }
+
+    const markUserActive = () => {
+      lastUserInteractionAt = Date.now()
+      if (!document.hidden) {
+        resumePolling()
+      }
+    }
+
+    const handlePollVisibilityChange = () => {
+      if (document.hidden) {
+        clearHiddenPollPauseTimer()
+        hiddenPollPauseTimer = setTimeout(() => {
+          suspendPolling()
+        }, POLL_BACKGROUND_PAUSE_DELAY_MS)
+        return
+      }
+
+      clearHiddenPollPauseTimer()
+      markUserActive()
+      evaluateIdleSuspension()
+    }
+
+    const activityEvents = ["pointerdown", "touchstart", "keydown", "mousemove"] as const
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, markUserActive, { passive: true })
+    })
+    document.addEventListener("visibilitychange", handlePollVisibilityChange)
+    handlePollVisibilityChange()
+    idleCheckTimer = setInterval(evaluateIdleSuspension, POLL_IDLE_CHECK_INTERVAL_MS)
+
     const pollRoom = async () => {
-      if (cancelled) return
+      if (cancelled || pollSuspended) return
       if (pollInFlightRef.current) {
         schedulePoll(getAdaptivePollDelay(callStatusRef.current === "active"))
         return
@@ -3532,7 +3596,7 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
         nextDelayMs = Math.min(30_000, Math.max(getAdaptivePollDelay(callStatusRef.current === "active"), 1200 * 2 ** exp))
       } finally {
         pollInFlightRef.current = false
-        if (shouldSchedule) schedulePoll(nextDelayMs)
+        if (shouldSchedule && !pollSuspended) schedulePoll(nextDelayMs)
       }
     }
 
@@ -3540,6 +3604,14 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
 
     return () => {
       cancelled = true
+      clearHiddenPollPauseTimer()
+      if (idleCheckTimer) {
+        clearInterval(idleCheckTimer)
+      }
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, markUserActive)
+      })
+      document.removeEventListener("visibilitychange", handlePollVisibilityChange)
       clearPolling()
       cache.clear()
       if (pollSyncRoomRef.current === syncRoomKey) {
