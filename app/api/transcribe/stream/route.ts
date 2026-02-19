@@ -91,28 +91,8 @@ export async function POST(req: Request) {
 
     console.error('[ASR Signature Debug]', debugInfo);
 
-    // Write debug info to public file for easy access
-    try {
-      const publicDir = path.join(process.cwd(), 'public');
-      if (fs.existsSync(publicDir)) {
-        const debugFilePath = path.join(publicDir, 'debug_asr.txt');
-        const fileContent = `
-Timestamp: ${new Date().toISOString()}
-VoiceID: ${debugVoiceId}
-SecretKey Length: ${secretKey.length} (Should be 32)
-Sign String (Raw): ${signStrForDebug}
-Signature (Base64): ${signature}
-Encoded Signature: ${encodedSignature}
-
-Debug Curl Command:
-${debugCurl}
-        `.trim();
-        fs.writeFileSync(debugFilePath, fileContent);
-        console.log(`Debug info written to ${debugFilePath}`);
-      }
-    } catch (err) {
-      console.error('Failed to write debug file:', err);
-    }
+    // Write debug info to public file for easy access - REMOVED for security
+    // The debug info is already logged to console above and returned in response below
 
     return new Response(JSON.stringify({
       wsUrl,
