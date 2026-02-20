@@ -1,8 +1,10 @@
-# MornSpeaker
+# MornSpeaker 🎙️
 
 MornSpeaker 是一个基于 Next.js App Router 的实时语音翻译协作平台，支持语音识别、文本翻译、房间协作、用户认证、支付与后台管理。
 
-## 核心能力
+作者：`lzylovec`
+
+## 核心能力 ⚡
 
 - 实时语音转写（腾讯云 ASR，含实时签名接口）
 - 多语言文本翻译（按部署模式自动走不同模型/服务）
@@ -11,19 +13,19 @@ MornSpeaker 是一个基于 Next.js App Router 的实时语音翻译协作平台
 - 多端登录能力（邮箱密码、微信相关登录流程）
 - 管理后台（广告位、发布包、系统配置等）
 
-## 技术栈
+## 技术栈 🧱
 
 - 前端：Next.js 16、React 19、TypeScript、Tailwind CSS 4、Radix UI
 - 后端：Next.js Route Handlers
 - 数据层：Prisma + MariaDB/MySQL（腾讯路径），并兼容 Supabase 相关能力
 - AI/语音：Mistral / 智谱 / DashScope、腾讯云 ASR
 
-## 环境要求
+## 环境要求 🧰
 
 - Node.js `>=20.19.0`（见 `.node-version` / `.nvmrc`）
 - npm `10.x`（项目锁定 `npm@10.9.2`）
 
-## 快速开始
+## 快速开始 🚀
 
 ### 1) 安装依赖
 
@@ -72,7 +74,7 @@ npm run dev
 
 说明：开发命令默认启用 HTTPS，并读取 `.cert/localhost-key.pem` 与 `.cert/localhost-cert.pem`。
 
-## 常用命令
+## 常用命令 🛠️
 
 ```bash
 # 本地开发
@@ -96,7 +98,7 @@ npm run cleanup:rooms:dry
 npm run cleanup:rooms
 ```
 
-## 目录结构
+## 目录结构 📁
 
 ```text
 .
@@ -113,7 +115,7 @@ npm run cleanup:rooms
 └── README_wechat.md        # 微信小程序接入说明
 ```
 
-## 验证建议
+## 验证建议 ✅
 
 当前仓库未配置标准测试框架（无 `test` script）。建议至少执行：
 
@@ -130,10 +132,10 @@ curl -k -X POST https://localhost:3000/api/translate \
   -d '{"text":"hello","sourceLanguage":"English","targetLanguage":"Chinese"}'
 ```
 
-## 相关文档
+## 相关文档 📚
 
 - 微信小程序套壳与网页端适配：`README_wechat.md`
 
-## License
+## License 📄
 
 MIT
