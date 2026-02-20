@@ -1,172 +1,139 @@
-# MornSpeaker - 智能实时语音翻译与协作平台
+# MornSpeaker
 
-MornSpeaker 是一款基于 Next.js 15 和 React 19 构建的现代化实时语音翻译聊天应用。它融合了先进的 AI 技术，支持多语言实时转录、翻译，并提供无缝的跨语言沟通体验。项目集成了完善的用户认证、房间管理以及强大的管理员后台系统。
+MornSpeaker 是一个基于 Next.js App Router 的实时语音翻译协作平台，支持语音识别、文本翻译、房间协作、用户认证、支付与后台管理。
 
-## 🌟 核心功能
+## 核心能力
 
-### 🗣️ 实时通讯与翻译
-- **实时语音转文字 (ASR)**: 集成阿里云 DashScope (Qwen) 等高精度模型，支持毫秒级语音转录。
-- **智能即时翻译**: 自动将转录内容翻译为目标语言，支持多种语言互译。
-- **文本转语音 (TTS)**: 支持高质量的语音合成播放，实现"听得懂"的跨语言对话。
-- **多模式交互**: 支持语音输入与键盘输入混合使用。
+- 实时语音转写（腾讯云 ASR，含实时签名接口）
+- 多语言文本翻译（按部署模式自动走不同模型/服务）
+- 语音播放（TTS 代理）
+- 房间聊天与成员协作（消息、会话、管理能力）
+- 多端登录能力（邮箱密码、微信相关登录流程）
+- 管理后台（广告位、发布包、系统配置等）
 
-### 🏠 房间与协作
-- **动态房间管理**: 用户可自由创建、加入聊天房间。
-- **实时同步**: 基于 Supabase/WebSockets 实现消息与状态的毫秒级同步。
-- **成员管理**: 房主可管理房间成员，支持踢出、禁言等操作。
+## 技术栈
 
-### 🛡️ 系统与管理
-- **安全认证**: 集成 Supabase Auth 和自定义 JWT 认证体系，保障用户数据安全。
-- **管理员后台**: 独立的 Admin Dashboard，提供数据可视化、用户管理、房间监控及广告位管理功能。
-- **广告投放系统**: 内置广告位管理模块，支持横幅广告的动态配置与展示。
+- 前端：Next.js 16、React 19、TypeScript、Tailwind CSS 4、Radix UI
+- 后端：Next.js Route Handlers
+- 数据层：Prisma + MariaDB/MySQL（腾讯路径），并兼容 Supabase 相关能力
+- AI/语音：Mistral / 智谱 / DashScope、腾讯云 ASR
 
-### 🌍 国际化与适配
-- **多语言界面 (i18n)**: 完整的国际化支持，通过 Context API 实现语言动态切换。
-- **响应式设计**: 精心打磨的 UI/UX，完美适配移动端 (Mobile)、平板 (Tablet) 和桌面端 (Desktop)。
+## 环境要求
 
----
+- Node.js `>=20.19.0`（见 `.node-version` / `.nvmrc`）
+- npm `10.x`（项目锁定 `npm@10.9.2`）
 
-## 🛠 技术栈
+## 快速开始
 
-### 前端架构
-- **框架**: [Next.js 15 (App Router)](https://nextjs.org/)
-- **语言**: [TypeScript](https://www.typescriptlang.org/)
-- **UI 组件**: [Radix UI](https://www.radix-ui.com/) (无头组件库) + [Shadcn UI](https://ui.shadcn.com/)
-- **样式系统**: [Tailwind CSS 4](https://tailwindcss.com/) + `tailwindcss-animate`
-- **图标库**: [Lucide React](https://lucide.dev/)
-- **状态管理**: React Context + Hooks
-
-### 后端与数据
-- **数据库 ORM**: [Prisma ORM](https://www.prisma.io/) (v7.2+)
-- **数据库**: MySQL / MariaDB (支持通过 Prisma Adapter 连接)
-- **BaaS 服务**: [Supabase](https://supabase.com/) (用于实时订阅、认证辅助)
-- **API 路由**: Next.js Route Handlers
-
-### AI 服务集成
-- **语音识别 (ASR)**: Alibaba DashScope (Qwen-Audio)
-- **大语言模型 (LLM)**: OpenAI / Mistral AI / ModelScope
-- **SDK**: Vercel AI SDK
-
----
-
-## 📂 目录结构概览
-
-```text
-MornSpeaker/
-├── app/                    # Next.js App Router 路由目录
-│   ├── admin/              # 管理员后台子应用
-│   ├── api/                # 后端 API 接口 (Auth, Translation, etc.)
-│   ├── auth/               # 认证相关页面
-│   └── (routes)/           # 主应用路由
-├── components/             # React 组件库
-│   ├── ui/                 # 通用 UI 基础组件 (Button, Input, etc.)
-│   ├── admin/              # 后台专用组件
-│   └── ...                 # 业务组件 (ChatArea, VoiceControls, etc.)
-├── lib/                    # 核心工具库
-│   ├── prisma.ts           # Prisma 客户端实例 (单例模式)
-│   ├── i18n.ts             # 国际化配置与工具
-│   ├── utils.ts            # 通用辅助函数
-│   └── store/              # 数据存储抽象层
-├── hooks/                  # 自定义 React Hooks
-├── prisma/                 # Prisma 数据库配置
-│   └── schema.prisma       # 数据库模型定义
-├── public/                 # 静态资源
-└── styles/                 # 全局样式
-```
-
----
-
-## 🚀 快速开始
-
-### 1. 环境要求
-- Node.js >= 18.17.0
-- npm / pnpm / yarn
-- MySQL 数据库实例 (本地或远程)
-
-### 2. 克隆项目与安装依赖
+### 1) 安装依赖
 
 ```bash
-git clone https://github.com/your-repo/MornSpeaker.git
-cd MornSpeaker
 npm install
-# 或者
-pnpm install
 ```
 
-### 3. 配置环境变量
+### 2) 配置环境变量
 
-复制 `.env.example` 为 `.env.local` 并配置以下关键变量：
+项目当前未提供 `.env.example`，请在仓库根目录创建 `.env.local`，至少包含：
 
 ```bash
-cp .env.example .env.local
+# 基础配置
+DATABASE_URL="mysql://user:password@127.0.0.1:3306/mornspeaker"
+JWT_SECRET="replace-with-a-long-random-string"
+
+# 非腾讯部署时的翻译能力（必填其一条路线）
+MISTRAL_API_KEY="your-mistral-api-key"
+
+# 腾讯部署模式（DEPLOY_TARGET=tencent）常用配置
+DEPLOY_TARGET="tencent"
+TENCENT_DATABASE_URL="mysql://user:password@host:3306/mornspeaker"
+TENCENT_ASR_SECRET_ID="xxx"
+TENCENT_ASR_SECRET_KEY="xxx"
+TENCENT_ASR_APP_ID="xxx"
+TENCENT_ZHIPU_API_KEY="xxx" # 或 TENCENT_DASHSCOPE_API_KEY
+
+# 可选：Supabase 实时/管理能力
+NEXT_PUBLIC_SUPABASE_URL="https://xxx.supabase.co"
+NEXT_PUBLIC_SUPABASE_ANON_KEY="xxx"
+SUPABASE_SERVICE_ROLE_KEY="xxx"
 ```
 
-编辑 `.env.local` 文件：
-
-```ini
-# === 数据库配置 (Prisma) ===
-# 格式: mysql://用户名:密码@主机:端口/数据库名
-DATABASE_URL="mysql://root:password@localhost:3306/mornspeaker"
-
-# === 认证配置 ===
-JWT_SECRET="your-secure-random-string"
-
-# === AI 服务配置 (根据需要配置) ===
-DASHSCOPE_API_KEY="sk-..."
-MISTRAL_API_KEY="..."
-
-# === Supabase 配置 (可选，用于实时功能) ===
-NEXT_PUBLIC_SUPABASE_URL="https://your-project.supabase.co"
-NEXT_PUBLIC_SUPABASE_ANON_KEY="ey..."
-```
-
-### 4. 数据库初始化
-
-使用 Prisma 同步数据库结构：
+### 3) 初始化 Prisma
 
 ```bash
-# 生成 Prisma Client
 npx prisma generate
-
-# 推送数据库结构 (开发环境)
 npx prisma db push
 ```
 
-### 5. 启动开发服务器
+### 4) 启动开发环境
 
 ```bash
 npm run dev
 ```
 
-访问 [http://localhost:3000](http://localhost:3000) 开始体验。
+说明：开发命令默认启用 HTTPS，并读取 `.cert/localhost-key.pem` 与 `.cert/localhost-cert.pem`。
 
----
-
-## 🔧 开发指南
-
-### 数据库迁移
-当你修改了 `prisma/schema.prisma` 文件后，请执行以下命令更新数据库和客户端：
+## 常用命令
 
 ```bash
-npx prisma db push
-npx prisma generate
+# 本地开发
+npm run dev
+
+# 生产构建（会先执行 scripts/adapt-schema.js + prisma generate）
+npm run build
+
+# 生产启动
+npm run start
+
+# 启动前执行数据库 push（谨慎用于生产）
+npm run start:migrate
+
+# 代码检查
+npm run lint
+npm run typecheck
+
+# 清理房间消息（脚本）
+npm run cleanup:rooms:dry
+npm run cleanup:rooms
 ```
 
-### 国际化 (i18n)
-项目使用自定义的 i18n 方案。如需添加新语言：
-1. 在 `lib/i18n.ts` 中更新 `SUPPORTED_LOCALES`。
-2. 在 `dictionaries/` 目录下添加相应的语言包文件。
+## 目录结构
 
----
+```text
+.
+├── app/                    # 页面与 API（App Router）
+│   ├── admin/              # 管理后台
+│   ├── api/                # 业务接口（auth/rooms/translate/transcribe/...）
+│   ├── auth/ login/ room/  # 核心业务页面
+├── components/             # 业务组件与通用 UI 组件
+├── hooks/                  # 自定义 hooks
+├── lib/                    # 核心工具、数据访问、i18n、鉴权等
+├── prisma/                 # Prisma schema
+├── scripts/                # 构建/运维辅助脚本
+├── rules/                  # CloudBase 相关规则文档
+└── README_wechat.md        # 微信小程序接入说明
+```
 
-## 🤝 贡献
+## 验证建议
 
-我们非常欢迎社区贡献！如果您发现 Bug 或有新功能建议，请：
-1. 提交 Issue 描述问题。
-2. Fork 本仓库并提交 Pull Request。
+当前仓库未配置标准测试框架（无 `test` script）。建议至少执行：
 
----
+```bash
+npm run lint
+npm run typecheck
+```
 
-## 📄 许可证
+开发环境接口可快速冒烟验证：
 
-本项目采用 MIT 许可证。详情请参阅 [LICENSE](LICENSE) 文件。
+```bash
+curl -k -X POST https://localhost:3000/api/translate \
+  -H 'content-type: application/json' \
+  -d '{"text":"hello","sourceLanguage":"English","targetLanguage":"Chinese"}'
+```
+
+## 相关文档
+
+- 微信小程序套壳与网页端适配：`README_wechat.md`
+
+## License
+
+MIT
