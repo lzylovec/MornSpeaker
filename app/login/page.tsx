@@ -651,36 +651,53 @@ export default function LoginPage() {
   const handleSendResetCode = async () => {
     setIsSubmitting(true)
     try {
-      if (!isTencent) {
-        toast({ title: "当前环境暂不支持", description: "请联系管理员处理密码找回。", variant: "destructive" })
-        return
-      }
       const trimmedEmail = email.trim()
       if (!trimmedEmail) {
         toast({ title: "邮箱不能为空", description: "请输入邮箱后重试。", variant: "destructive" })
         return
       }
-      const { getCloudBaseAuth } = await import("@/lib/cloudbase-client")
-      const auth = getCloudBaseAuth()
-      await ensureCloudbasePersistence(auth)
-      if (resetRequestLock.current) return
-      resetRequestLock.current = true
-      try {
-        const verification = await auth.getVerification({ email: trimmedEmail })
-        setResetVerificationId(verification.verification_id)
-        setResetVerificationEmail(trimmedEmail)
-        if (!verification.is_user) {
-          toast({ title: "邮箱未注册", description: "该邮箱尚未注册，请先完成注册。", variant: "destructive" })
-          return
+
+      if (isTencent) {
+        const { getCloudBaseAuth } = await import("@/lib/cloudbase-client")
+        const auth = getCloudBaseAuth()
+        await ensureCloudbasePersistence(auth)
+        if (resetRequestLock.current) return
+        resetRequestLock.current = true
+        try {
+          const verification = await auth.getVerification({ email: trimmedEmail })
+          setResetVerificationId(verification.verification_id)
+          setResetVerificationEmail(trimmedEmail)
+          if (!verification.is_user) {
+            toast({ title: "邮箱未注册", description: "该邮箱尚未注册，请先完成注册。", variant: "destructive" })
+            return
+          }
+          setResetResendCountdown(60)
+          toast({ title: "验证码已发送", description: "请查收邮箱中的验证码。" })
+        } finally {
+          resetRequestLock.current = false
         }
-        setResetResendCountdown(60)
-        toast({ title: "验证码已发送", description: "请查收邮箱中的验证码。" })
-      } finally {
-        resetRequestLock.current = false
+        return
       }
+
+      const { error } = await supabase.auth.signInWithOtp({
+        email: trimmedEmail,
+        options: {
+          shouldCreateUser: false,
+        },
+      })
+      if (error) throw error
+      setResetVerificationId(null)
+      setResetVerificationEmail(trimmedEmail)
+      setResetResendCountdown(60)
+      toast({ title: "验证码已发送", description: "请查收邮箱中的验证码。" })
     } catch (e) {
-      const message = extractTencentAuthError(e)
-      toast({ title: "发送失败", description: message, variant: "destructive" })
+      if (isTencent) {
+        const message = extractTencentAuthError(e)
+        toast({ title: "发送失败", description: message, variant: "destructive" })
+      } else {
+        const formatted = formatAuthError(e)
+        toast({ title: "发送失败", description: formatted.description, variant: "destructive" })
+      }
     } finally {
       setIsSubmitting(false)
     }
@@ -689,10 +706,6 @@ export default function LoginPage() {
   const handleResetPassword = async () => {
     setIsSubmitting(true)
     try {
-      if (!isTencent) {
-        toast({ title: "当前环境暂不支持", description: "请联系管理员处理密码找回。", variant: "destructive" })
-        return
-      }
       const trimmedEmail = email.trim()
       const trimmedResetCode = resetCode.trim()
       if (!trimmedEmail || !trimmedResetCode || !password || !confirmPassword) {
@@ -703,7 +716,7 @@ export default function LoginPage() {
         toast({ title: "两次密码不一致", description: "请确认两次输入的新密码相同。", variant: "destructive" })
         return
       }
-      if (!validateTencentPassword(password)) {
+      if (isTencent && !validateTencentPassword(password)) {
         toast({ title: "密码不符合要求", description: "请使用包含字母和数字的 6-20 位组合。", variant: "destructive" })
         return
       }
@@ -712,27 +725,39 @@ export default function LoginPage() {
         return
       }
 
-      const { getCloudBaseAuth } = await import("@/lib/cloudbase-client")
-      const auth = getCloudBaseAuth()
-      await ensureCloudbasePersistence(auth)
-      if (resetVerifyLock.current) return
-      resetVerifyLock.current = true
-      try {
-        const verifyRes = await auth.verify({
-          verification_code: trimmedResetCode,
-          verification_id: resetVerificationId || undefined,
-        })
-        const verificationToken = verifyRes?.verification_token
-        if (!verificationToken) {
-          throw new Error("验证码无效或已过期，请重新发送后重试")
+      if (isTencent) {
+        const { getCloudBaseAuth } = await import("@/lib/cloudbase-client")
+        const auth = getCloudBaseAuth()
+        await ensureCloudbasePersistence(auth)
+        if (resetVerifyLock.current) return
+        resetVerifyLock.current = true
+        try {
+          const verifyRes = await auth.verify({
+            verification_code: trimmedResetCode,
+            verification_id: resetVerificationId || undefined,
+          })
+          const verificationToken = verifyRes?.verification_token
+          if (!verificationToken) {
+            throw new Error("验证码无效或已过期，请重新发送后重试")
+          }
+          await auth.resetPassword({
+            email: trimmedEmail,
+            new_password: password,
+            verification_token: verificationToken,
+          })
+        } finally {
+          resetVerifyLock.current = false
         }
-        await auth.resetPassword({
+      } else {
+        const { error: verifyError } = await supabase.auth.verifyOtp({
           email: trimmedEmail,
-          new_password: password,
-          verification_token: verificationToken,
+          token: trimmedResetCode,
+          type: "email",
         })
-      } finally {
-        resetVerifyLock.current = false
+        if (verifyError) throw verifyError
+        const { error: updateError } = await supabase.auth.updateUser({ password })
+        if (updateError) throw updateError
+        await supabase.auth.signOut()
       }
 
       toast({ title: "密码重置成功", description: "请使用新密码登录。" })
@@ -744,6 +769,11 @@ export default function LoginPage() {
       setResetVerificationEmail(null)
       setView("form")
     } catch (e) {
+      if (!isTencent) {
+        const formatted = formatAuthError(e)
+        toast({ title: "重置失败", description: formatted.description, variant: "destructive" })
+        return
+      }
       const rawMessage = extractTencentAuthError(e)
       const normalized = rawMessage.toLowerCase()
       let description = rawMessage
@@ -1028,7 +1058,7 @@ export default function LoginPage() {
               </div>
             )}
 
-            {view === "form" && isTencent ? (
+            {view === "form" ? (
               <div className="flex justify-center pt-1">
                 <Button
                   variant="link"
