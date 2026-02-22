@@ -4766,11 +4766,11 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
                 <div className="max-w-4xl mx-auto flex items-end gap-2">
 
                   {/* 1. Language Controls (Left) */}
-                  <div className="shrink-0 flex items-center bg-secondary/30 rounded-2xl p-1 border border-border/40 h-10 sm:h-12">
+                  <div className="shrink min-w-0 max-w-[52%] flex items-center bg-secondary/30 rounded-2xl p-1 border border-border/40 h-10 sm:h-12">
                     <Select value={sourceLanguage.code} onValueChange={handleSourceLanguageChange}>
-                      <SelectTrigger className="h-full border-0 bg-transparent shadow-none focus:ring-0 px-2 gap-1.5 min-w-[3.5rem] justify-center">
+                      <SelectTrigger className="h-full min-w-[2.75rem] max-w-[7.5rem] border-0 bg-transparent px-1.5 shadow-none gap-1 focus:ring-0 sm:min-w-[3.25rem] sm:px-2 justify-center">
                         <span className="text-base sm:text-lg leading-none">{sourceLanguage.flag}</span>
-                        <span className="text-xs font-medium text-muted-foreground hidden sm:inline-block max-w-[4rem] truncate text-left">
+                        <span className="hidden max-w-[3.2rem] truncate text-left text-xs font-medium text-muted-foreground xl:inline-block">
                           {sourceLanguageDisplayName}
                         </span>
                       </SelectTrigger>
@@ -4782,9 +4782,9 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
                     <ArrowRightLeft className="w-3 h-3 text-muted-foreground/40 mx-0.5" />
 
                     <Select value={targetLanguage.code} onValueChange={handleTargetLanguageChange}>
-                      <SelectTrigger className="h-full border-0 bg-transparent shadow-none focus:ring-0 px-2 gap-1.5 min-w-[3.5rem] justify-center">
+                      <SelectTrigger className="h-full min-w-[2.75rem] max-w-[7.5rem] border-0 bg-transparent px-1.5 shadow-none gap-1 focus:ring-0 sm:min-w-[3.25rem] sm:px-2 justify-center">
                         <span className="text-base sm:text-lg leading-none">{targetLanguage.flag}</span>
-                        <span className="text-xs font-medium text-muted-foreground hidden sm:inline-block max-w-[4rem] truncate text-left">
+                        <span className="hidden max-w-[3.2rem] truncate text-left text-xs font-medium text-muted-foreground xl:inline-block">
                           {targetLanguageDisplayName}
                         </span>
                       </SelectTrigger>
@@ -4795,7 +4795,7 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
                   </div>
 
                   {/* 2. Input Field (Middle - Flex Grow) */}
-                  <div className="flex-1 min-w-0 relative group">
+                  <div className="flex-1 min-w-[8rem] relative group">
                     <Input
                       value={inputText}
                       onChange={(e) => setInputText(e.target.value)}
@@ -4824,18 +4824,20 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
                   </div>
 
                   {/* 3. Voice Button (Right) */}
-                  <div className="shrink-0">
-                    <VoiceControls
-                      variant="stacked"
-                      showHint={false}
-                      showStatus={false}
-                      buttonSize="w-full h-full"
-                      isProcessing={isProcessing}
-                      onRecordingComplete={handleRecordingComplete}
-                      onRecordingChange={setIsRecording}
-                      className="h-10 w-10 sm:h-12 sm:w-12 p-0"
-                    />
-                  </div>
+                  {callStatus !== "active" && (
+                    <div className="shrink-0">
+                      <VoiceControls
+                        variant="stacked"
+                        showHint={false}
+                        showStatus={false}
+                        buttonSize="w-full h-full"
+                        isProcessing={isProcessing}
+                        onRecordingComplete={handleRecordingComplete}
+                        onRecordingChange={setIsRecording}
+                        className="h-9 w-9 sm:h-11 sm:w-11 p-0"
+                      />
+                    </div>
+                  )}
                 </div>
 
                 {/* Optional Hint Overlay */}
