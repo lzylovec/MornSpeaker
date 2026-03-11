@@ -2041,8 +2041,6 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
 
   const restartCallLivePipeline = useCallback(async (nextSourceCode: string, nextTargetCode: string) => {
     if (isCallMuted) {
-      await stopTrtcRealtimeTranscriber()
-      stopCallFallbackAsr()
       setIsCallStreaming(false)
       return
     }
@@ -2358,8 +2356,6 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
 
     const syncLivePipelineWithMute = async () => {
       if (isCallMuted) {
-        await stopTrtcRealtimeTranscriber()
-        stopCallFallbackAsr()
         if (!cancelled) {
           setLiveTranscript("")
           setConfirmedTranscript("")
@@ -3764,9 +3760,6 @@ export function VoiceChatInterface({ initialRoomId, autoJoin = false }: VoiceCha
               hasCaptionSignal = true
               const incomingId = String(payload.callId || "")
               if (callStatusRef.current !== "active" || (incomingId && callIdRef.current && incomingId !== callIdRef.current)) {
-                continue
-              }
-              if (trtcCustomCaptionActiveRef.current) {
                 continue
               }
               const seqRaw = payload.seq
