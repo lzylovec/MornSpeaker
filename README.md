@@ -26,6 +26,33 @@ MornSpeaker 是一个基于 Next.js App Router 构建的实时语音翻译协作
 
 当前代码库以 Next.js、React 和 TypeScript 为实际实现基础，并通过 Route Handlers 统一承载业务 API；数据库和 AI 服务可以根据部署环境切换。
 
+## 界面预览
+
+以下截图来自项目实际运行界面，覆盖首页入口、多人会议室、翻译消息和系统同传四个核心场景。
+
+<table>
+  <tr>
+    <td align="center" width="50%">
+      <strong>首页</strong><br />
+      <img src="./public/screenshots/home.png" alt="MornSpeaker 首页" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>会议室主界面</strong><br />
+      <img src="./public/screenshots/room.png" alt="MornSpeaker 会议室主界面" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center" width="50%">
+      <strong>翻译消息</strong><br />
+      <img src="./public/screenshots/translation-message.png" alt="MornSpeaker 翻译消息" width="100%" />
+    </td>
+    <td align="center" width="50%">
+      <strong>系统同传</strong><br />
+      <img src="./public/screenshots/system-audio.png" alt="MornSpeaker 系统同传" width="100%" />
+    </td>
+  </tr>
+</table>
+
 ## 能力一览
 
 | 能力 | 说明 | 主要入口 |
